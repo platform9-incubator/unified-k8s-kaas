@@ -34,6 +34,8 @@ const (
 	//APIServerCACert CA used to sign API server cert.
 	//This must be trusted by proxy server
 	APIServerCACert = "./certs/apiserver/pki/ca.crt"
+	//ClientCACert that must be trusted by proxy server
+	ClientCACert = "./certs/client/pki/ca.crt"
 )
 
 //ParsedYaml holds contents of a parsed yaml
@@ -151,10 +153,16 @@ func main() {
 			}
 		}
 	})
+	caCert, _ := ioutil.ReadFile(ClientCACert)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
 	server := &http.Server{
 		Addr: "127.0.0.1:8080",
 		TLSConfig: &tls.Config{
 			ClientAuth: tls.RequestClientCert,
+			//similar to setting client-ca for shadow API server
+			RootCAs: caCertPool,
 		},
 	}
 	//should accept any client cert?
