@@ -43,7 +43,10 @@ Proxy server listens on 8080 over TLS.
 kubectl can be used to talk to the proxy server as follows:
 
 ```
-kubectl --kubeconfig=/home/vagrant/go/src/single-rbac/user-kube-config get pods --all-namespaces
+kubectl --kubeconfig=/home/vagrant/go/src/single-rbac/example-admin-user-config get pods --all-namespaces
+
+kubectl --kubeconfig=/home/vagrant/go/src/single-rbac/example-limited-access-user-config get pods --all-namespaces
+
 ```
 
 

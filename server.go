@@ -160,9 +160,11 @@ func main() {
 	server := &http.Server{
 		Addr: "127.0.0.1:8080",
 		TLSConfig: &tls.Config{
-			ClientAuth: tls.RequestClientCert,
+			//Force client certificate validation, also required to fill PeerCertificates
+			//needed later to extract client identity information
+			ClientAuth: tls.RequireAndVerifyClientCert,
 			//similar to setting client-ca for shadow API server
-			RootCAs: caCertPool,
+			ClientCAs: caCertPool,
 		},
 	}
 	//should accept any client cert?

@@ -1,0 +1,23 @@
+--- 
+apiVersion: v1
+clusters: 
+  - 
+    cluster: 
+      certificate-authority: ./certs/proxy/pki/ca.crt
+      server: "https://127.0.0.1:8080"
+    name: myK8sCluster
+contexts: 
+  - 
+    context: 
+      cluster: myK8sCluster
+      user: userb
+    name: myK8sCluster
+current-context: myK8sCluster
+kind: Config
+preferences: {}
+users: 
+  - 
+    name: userb
+    user: 
+      client-certificate: ./certs/client/pki/issued/userb.crt
+      client-key: ./certs/client/pki/private/userb.key
