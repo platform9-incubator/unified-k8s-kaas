@@ -33,9 +33,13 @@ Proxy server can be built using
 go get
 go build server.go
 ```
-To start the server 
+To start the server using default location for remote cluster kubeconfig (`./config`)
 ```
 ./server
+```
+To start the server specifying location for remote cluster kubeconfig (`./config`)
+```
+./server -config=./mypath/to/config
 ```
 
 Proxy server listens on 8080 over TLS. 

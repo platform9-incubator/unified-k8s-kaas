@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"flag"
 	"fmt"
 	"log"
 	"net/url"
@@ -18,8 +19,8 @@ import (
 )
 
 const (
-	//AzureConfig Location of external cluster kubeconfig
-	AzureConfig = "./config"
+	//RemoteConfig Location of external cluster kubeconfig
+	RemoteConfig = "./config"
 	//ProxyClientCert Location of crt file used by proxy
 	//while talking to shadow API server. Signing CA should
 	//be added to API requestheader-client-ca-file
@@ -45,10 +46,10 @@ type ParsedYaml struct {
 	Token     string
 }
 
-func parseConfig() *ParsedYaml {
+func parseConfig(configLocation string) *ParsedYaml {
 	parsed := ParsedYaml{}
 
-	source, err := ioutil.ReadFile(AzureConfig)
+	source, err := ioutil.ReadFile(configLocation)
 	if err != nil {
 		panic(err)
 	}
@@ -90,8 +91,8 @@ func parseConfig() *ParsedYaml {
 	return &parsed
 }
 
-func getRemoteProxy() *httputil.ReverseProxy {
-	parsed := parseConfig()
+func getRemoteProxy(configLocation string) *httputil.ReverseProxy {
+	parsed := parseConfig(configLocation)
 	directToRemote := func(req *http.Request) {
 		req.URL.Scheme = "https"
 		req.URL.Host = parsed.Host
@@ -130,8 +131,11 @@ func getLocalProxy() *httputil.ReverseProxy {
 }
 
 func main() {
+	configLocation := flag.String("config", RemoteConfig, "Location of config file")
+	flag.Parse()
+	fmt.Println("config location = " + *configLocation)
 	proxyLocal := getLocalProxy()
-	proxyRemote := getRemoteProxy()
+	proxyRemote := getRemoteProxy(*configLocation)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "rbac") || strings.Contains(r.URL.Path, "certificates") || strings.Contains(r.URL.Path, "auth") {
