@@ -46,6 +46,26 @@ type ParsedYaml struct {
 	Token     string
 }
 
+//Returns TLS Config given file locations for
+//cert, key and data for caCert
+func getTLSConfigFromData(certFile, keyFile, caCert []byte) *tls.Config {
+	cert, _ := tls.X509KeyPair(certFile, keyFile)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
+	}
+	return tlsConfig
+}
+
+func getTLSConfigFromFiles(certFile, keyFile, caCert string) *tls.Config {
+	cert, _ := ioutil.ReadFile(certFile)
+	key, _ := ioutil.ReadFile(keyFile)
+	ca, _ := ioutil.ReadFile(caCert)
+	return getTLSConfigFromData(cert, key, ca)
+}
+
 func parseConfig(configLocation string) *ParsedYaml {
 	parsed := ParsedYaml{}
 
@@ -70,22 +90,11 @@ func parseConfig(configLocation string) *ParsedYaml {
 	userToken, err := user.Get("token").String()
 
 	//create TLS config
-	decodedCert, err := base64.StdEncoding.DecodeString(clienCert)
-	err = ioutil.WriteFile("/tmp/cert", decodedCert, 0644)
-	decodedKey, err := base64.StdEncoding.DecodeString(clienKey)
-	err = ioutil.WriteFile("/tmp/key", decodedKey, 0644)
-	// Load client cert
-	cert, err := tls.LoadX509KeyPair("/tmp/cert", "/tmp/key")
-	// Load CA cert
+	cert, err := base64.StdEncoding.DecodeString(clienCert)
+	key, err := base64.StdEncoding.DecodeString(clienKey)
 	caCert, err := base64.StdEncoding.DecodeString(ca)
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
 
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-	}
-	parsed.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	parsed.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromData(cert, key, caCert)}
 	parsed.Token = userToken
 	parsed.Host = u.Host
 	return &parsed
@@ -104,16 +113,6 @@ func getRemoteProxy(configLocation string) *httputil.ReverseProxy {
 }
 
 func getLocalProxy() *httputil.ReverseProxy {
-	cert, _ := tls.LoadX509KeyPair(ProxyClientCert, ProxyClientKey)
-	caCert, _ := ioutil.ReadFile(APIServerCACert)
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-	}
-
 	directToLocal := func(req *http.Request) {
 		req.URL.Scheme = "https"
 		req.URL.Host = "127.0.0.1:6443"
@@ -123,17 +122,15 @@ func getLocalProxy() *httputil.ReverseProxy {
 		for _, orgName := range cert.Subject.Organization {
 			req.Header.Add("X-Remote-Group", orgName)
 		}
-
 	}
 	proxy := &httputil.ReverseProxy{Director: directToLocal}
-	proxy.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+	proxy.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromFiles(ProxyClientCert, ProxyClientKey, APIServerCACert)}
 	return proxy
 }
 
 func main() {
 	configLocation := flag.String("config", RemoteConfig, "Location of config file")
 	flag.Parse()
-	fmt.Println("config location = " + *configLocation)
 	proxyLocal := getLocalProxy()
 	proxyRemote := getRemoteProxy(*configLocation)
 
@@ -167,10 +164,10 @@ func main() {
 			//Force client certificate validation, also required to fill PeerCertificates
 			//needed later to extract client identity information
 			ClientAuth: tls.RequireAndVerifyClientCert,
-			//similar to setting client-ca for shadow API server
+			//similar to setting client-ca for shadow API server.
+			//Allows only certs signed by this CA
 			ClientCAs: caCertPool,
 		},
 	}
-	//should accept any client cert?
 	log.Fatal(server.ListenAndServeTLS(ProxyServerCert, ProxyServerKey))
 }
