@@ -159,12 +159,12 @@ func main() {
 	caCertPool.AppendCertsFromPEM(caCert)
 
 	server := &http.Server{
-		Addr: "127.0.0.1:8080",
+		Addr: "0.0.0.0:8080",
 		TLSConfig: &tls.Config{
-			//Force client certificate validation, also required to fill PeerCertificates
-			//needed later to extract client identity information
+			//Force client certificate validation,
+			//Required also to get PeerCertificates needed later to extract client identity information
 			ClientAuth: tls.RequireAndVerifyClientCert,
-			//similar to setting client-ca for shadow API server.
+			//Similar to setting client-ca for shadow API server.
 			//Allows only certs signed by this CA
 			ClientCAs: caCertPool,
 		},
