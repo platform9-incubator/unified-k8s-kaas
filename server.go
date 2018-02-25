@@ -15,6 +15,8 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/smallfish/simpleyaml"
 )
 
@@ -134,7 +136,9 @@ func main() {
 	proxyLocal := getLocalProxy()
 	proxyRemote := getRemoteProxy(*configLocation)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	allRequestHandler := func(c *gin.Context) {
+		r := c.Request
+		w := c.Writer
 		if strings.Contains(r.URL.Path, "rbac") || strings.Contains(r.URL.Path, "certificates") || strings.Contains(r.URL.Path, "auth") {
 			proxyLocal.ServeHTTP(w, r)
 		} else {
@@ -153,11 +157,13 @@ func main() {
 				w.Write(recW.Body.Bytes())
 			}
 		}
-	})
+	}
+
 	caCert, _ := ioutil.ReadFile(ClientCACert)
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
 
+	r := gin.Default()
 	server := &http.Server{
 		Addr: "0.0.0.0:8080",
 		TLSConfig: &tls.Config{
@@ -168,6 +174,10 @@ func main() {
 			//Allows only certs signed by this CA
 			ClientCAs: caCertPool,
 		},
+		Handler: r,
 	}
+	r.Any("/", allRequestHandler)
+	r.NoRoute(allRequestHandler)
+
 	log.Fatal(server.ListenAndServeTLS(ProxyServerCert, ProxyServerKey))
 }
