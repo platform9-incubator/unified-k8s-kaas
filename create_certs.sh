@@ -1,4 +1,4 @@
-export PATH=$PATH:/home/vagrant/easy-rsa/easyrsa3/
+export PATH=$PATH:$PWD/easy-rsa/easyrsa3/
 rm -rf certs
 mkdir certs
 cd certs
