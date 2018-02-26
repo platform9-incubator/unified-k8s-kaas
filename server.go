@@ -4,10 +4,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"flag"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"strings"
 
 	"io/ioutil"
@@ -40,6 +40,8 @@ const (
 	//ClientCACert that must be trusted by proxy server
 	ClientCACert = "./certs/client/pki/ca.crt"
 )
+
+var proxyRemote *httputil.ReverseProxy
 
 //ParsedYaml holds contents of a parsed yaml
 type ParsedYaml struct {
@@ -129,14 +131,39 @@ func getLocalProxy() *httputil.ReverseProxy {
 	proxy.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromFiles(ProxyClientCert, ProxyClientKey, APIServerCACert)}
 	return proxy
 }
+func selectClusterConfig(c *gin.Context) {
+	fileName := c.Param("name")
+	dir, _ := os.Getwd()
+	fmt.Printf("Checking if file %s exists", dir+"/"+fileName)
+	if _, err := os.Stat(dir + "/" + fileName); os.IsNotExist(err) {
+		c.String(http.StatusBadRequest, fmt.Sprintf("Invalid cluster name: %s", fileName))
+	}
+	proxyRemote = getRemoteProxy(fileName)
 
+}
+func addClusterConfig(c *gin.Context) {
+	// Source
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.String(http.StatusBadRequest, fmt.Sprintf("get form err: %s", err.Error()))
+		return
+	}
+	if err := c.SaveUploadedFile(file, file.Filename); err != nil {
+		c.String(http.StatusBadRequest, fmt.Sprintf("upload file err: %s", err.Error()))
+		return
+	}
+	proxyRemote = getRemoteProxy(file.Filename)
+	c.String(http.StatusOK, fmt.Sprintf("File %s uploaded successfully, remote cluster set", file.Filename))
+
+}
 func main() {
-	configLocation := flag.String("config", RemoteConfig, "Location of config file")
-	flag.Parse()
+
 	proxyLocal := getLocalProxy()
-	proxyRemote := getRemoteProxy(*configLocation)
 
 	allRequestHandler := func(c *gin.Context) {
+		if proxyRemote == nil {
+			c.String(http.StatusBadRequest, fmt.Sprintf("No cluster set"))
+		}
 		r := c.Request
 		w := c.Writer
 		if strings.Contains(r.URL.Path, "rbac") || strings.Contains(r.URL.Path, "certificates") || strings.Contains(r.URL.Path, "auth") {
@@ -176,8 +203,10 @@ func main() {
 		},
 		Handler: r,
 	}
-	r.Any("/", allRequestHandler)
 	r.NoRoute(allRequestHandler)
+
+	r.POST("/clusterconfig", addClusterConfig)
+	r.PUT("/clusterconfig/:name", selectClusterConfig)
 
 	log.Fatal(server.ListenAndServeTLS(ProxyServerCert, ProxyServerKey))
 }
