@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 
 	"io/ioutil"
@@ -48,6 +49,11 @@ type ParsedYaml struct {
 	Transport *http.Transport
 	Host      string
 	Token     string
+}
+
+type UserInfo struct {
+	Name  string `json:"name"`
+	Group string `json:"group"`
 }
 
 //Returns TLS Config given file locations for
@@ -139,8 +145,59 @@ func selectClusterConfig(c *gin.Context) {
 		c.String(http.StatusBadRequest, fmt.Sprintf("Invalid cluster name: %s", fileName))
 	}
 	proxyRemote = getRemoteProxy(fileName)
-
 }
+
+func generateKubeConfig(c *gin.Context) {
+	userInfo := UserInfo{}
+	c.BindJSON(&userInfo)
+	fmt.Print("Obtained this json ", userInfo)
+	if userInfo.Group == "" {
+		userInfo.Group = "nogroup"
+	}
+	dir, _ := os.Getwd()
+	command := dir + "/easy-rsa/easyrsa3/easyrsa"
+
+	genReq := exec.Command(command, "--batch", "--req-cn="+userInfo.Name, "--req-email=", "--dn-mode=org", "--req-org="+userInfo.Group, "gen-req", userInfo.Name, "nopass")
+	fmt.Print("Command to be executed ", genReq)
+	genReq.Dir = dir + "/certs/client"
+	output, err := genReq.CombinedOutput()
+	if err != nil {
+		fmt.Print("Could not execute command ", err)
+	}
+	fmt.Print(string(output))
+	signReq := exec.Command(command, "--batch", "sign-req", "client", userInfo.Name)
+	fmt.Print("Command to be executed ", signReq)
+	signReq.Dir = dir + "/certs/client"
+	output, err = signReq.CombinedOutput()
+	if err != nil {
+		fmt.Print("Could not execute command ", err)
+	}
+	fmt.Print(string(output))
+
+	caBytes, _ := ioutil.ReadFile("./certs/proxy/pki/ca.crt")
+	clienCert, _ := ioutil.ReadFile("./certs/client/pki/issued/" + userInfo.Name + ".crt")
+	clientKey, _ := ioutil.ReadFile("./certs/client/pki/private/" + userInfo.Name + ".key")
+
+	config := `{"apiVersion":"v1","clusters":[{"cluster":{"certificate-authority-data":"CACERT",
+		"server":"https://34.216.73.235:8080"},"name":"myK8sCluster"}],"contexts":
+		[{"context":{"cluster":"myK8sCluster","user":"usera"},"name":"myK8sCluster"}],
+		"current-context":"myK8sCluster","kind":"Config","preferences":{},"users":
+		[{"name":"usera","user":{"client-certificate-data":"CLIENT_CERT","client-key-data":"CLIENT_KEY"}}]}`
+	config1 := strings.Replace(config, "CACERT", base64.StdEncoding.EncodeToString(caBytes), -1)
+	config2 := strings.Replace(config1, "CLIENT_CERT", base64.StdEncoding.EncodeToString(clienCert), -1)
+	config3 := strings.Replace(config2, "CLIENT_KEY", base64.StdEncoding.EncodeToString(clientKey), -1)
+
+	f, err := ioutil.TempFile("/tmp", "kubeconfig")
+	f.WriteString(config3)
+	f.Close()
+	c.Header("Content-Description", "File Transfer")
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Header("Content-Disposition", "attachment; filename= kubeconfig.yml")
+	c.Header("Content-Type", "application/octet-stream")
+
+	c.File(f.Name())
+}
+
 func addClusterConfig(c *gin.Context) {
 	// Source
 	file, err := c.FormFile("file")
@@ -207,6 +264,8 @@ func main() {
 
 	r.POST("/clusterconfig", addClusterConfig)
 	r.PUT("/clusterconfig/:name", selectClusterConfig)
+	r.POST("/kubeconfig", generateKubeConfig)
+	r.ANY("/access", addmissionController)
 
 	log.Fatal(server.ListenAndServeTLS(ProxyServerCert, ProxyServerKey))
 }
