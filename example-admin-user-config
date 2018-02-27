@@ -10,14 +10,14 @@ contexts:
   - 
     context: 
       cluster: myK8sCluster
-      user: usera
+      user: adminuser
     name: myK8sCluster
 current-context: myK8sCluster
 kind: Config
 preferences: {}
 users: 
   - 
-    name: usera
+    name: adminuser
     user: 
-      client-certificate: ./certs/client/pki/issued/usera.crt
-      client-key: ./certs/client/pki/private/usera.key
+      client-certificate: ./certs/apiserver/pki/issued/adminuser.crt
+      client-key: ./certs/apiserver/pki/private/adminuser.key

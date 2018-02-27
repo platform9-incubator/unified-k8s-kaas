@@ -9,7 +9,7 @@ Shadow API server can be used to selectively handle Kubernetes API objects. This
 Allows users to own and govern certain API objects while still giving a uniform view of the objects resident in remote cluster.
 
 ### Certificate management
-![](./diagrams/certificates.png)
+![](./diagrams/certs.png)
 
 ## Usage
 
@@ -33,13 +33,9 @@ Proxy server can be built using
 go get
 go build server.go
 ```
-To start the server using default location for remote cluster kubeconfig (`./config`)
+To start the server 
 ```
 ./server
-```
-To start the server specifying location for remote cluster kubeconfig (`./config`)
-```
-./server -config=./mypath/to/config
 ```
 
 Proxy server listens on 8080 over TLS. 
