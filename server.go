@@ -40,7 +40,8 @@ const (
 	//This must be trusted by proxy server
 	APIServerCACert = "./certs/apiserver/pki/ca.crt"
 	//ClientCACert that must be trusted by proxy server
-	ClientCACert = "./certs/client/pki/ca.crt"
+	//API server is used to sign client certs through cert APIs
+	ClientCACert = APIServerCACert
 )
 
 var proxyRemote *httputil.ReverseProxy
@@ -209,7 +210,7 @@ func generateKubeConfig(c *gin.Context) {
 
 	genReq := exec.Command(command, "--batch", "--req-cn="+userInfo.Name, "--req-email=", "--dn-mode=org", "--req-org="+userInfo.Group, "gen-req", userInfo.Name, "nopass")
 	fmt.Print("Command to be executed ", genReq)
-	genReq.Dir = dir + "/certs/client"
+	genReq.Dir = dir + "/certs/apiserver"
 	output, err := genReq.CombinedOutput()
 	if err != nil {
 		fmt.Print("Could not execute command ", err)
@@ -217,7 +218,7 @@ func generateKubeConfig(c *gin.Context) {
 	fmt.Print(string(output))
 	signReq := exec.Command(command, "--batch", "sign-req", "client", userInfo.Name)
 	fmt.Print("Command to be executed ", signReq)
-	signReq.Dir = dir + "/certs/client"
+	signReq.Dir = dir + "/certs/apiserver"
 	output, err = signReq.CombinedOutput()
 	if err != nil {
 		fmt.Print("Could not execute command ", err)
@@ -225,8 +226,8 @@ func generateKubeConfig(c *gin.Context) {
 	fmt.Print(string(output))
 
 	caBytes, _ := ioutil.ReadFile("./certs/proxy/pki/ca.crt")
-	clienCert, _ := ioutil.ReadFile("./certs/client/pki/issued/" + userInfo.Name + ".crt")
-	clientKey, _ := ioutil.ReadFile("./certs/client/pki/private/" + userInfo.Name + ".key")
+	clienCert, _ := ioutil.ReadFile("./certs/apiserver/pki/issued/" + userInfo.Name + ".crt")
+	clientKey, _ := ioutil.ReadFile("./certs/apiserver/pki/private/" + userInfo.Name + ".key")
 
 	config := `{"apiVersion":"v1","clusters":[{"cluster":{"certificate-authority-data":"CACERT",
 		"server":"https://34.216.73.235:8080"},"name":"myK8sCluster"}],"contexts":
