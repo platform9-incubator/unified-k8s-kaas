@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -43,18 +44,8 @@ const (
 )
 
 var proxyRemote *httputil.ReverseProxy
-
-//ParsedYaml holds contents of a parsed yaml
-type ParsedYaml struct {
-	Transport *http.Transport
-	Host      string
-	Token     string
-}
-
-type UserInfo struct {
-	Name  string `json:"name"`
-	Group string `json:"group"`
-}
+var proxyLocal *httputil.ReverseProxy
+var server *http.Server
 
 //Returns TLS Config given file locations for
 //cert, key and data for caCert
@@ -66,6 +57,7 @@ func getTLSConfigFromData(certFile, keyFile, caCert []byte) *tls.Config {
 		Certificates: []tls.Certificate{cert},
 		RootCAs:      caCertPool,
 	}
+
 	return tlsConfig
 }
 
@@ -73,6 +65,7 @@ func getTLSConfigFromFiles(certFile, keyFile, caCert string) *tls.Config {
 	cert, _ := ioutil.ReadFile(certFile)
 	key, _ := ioutil.ReadFile(keyFile)
 	ca, _ := ioutil.ReadFile(caCert)
+
 	return getTLSConfigFromData(cert, key, ca)
 }
 
@@ -107,6 +100,7 @@ func parseConfig(configLocation string) *ParsedYaml {
 	parsed.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromData(cert, key, caCert)}
 	parsed.Token = userToken
 	parsed.Host = u.Host
+
 	return &parsed
 }
 
@@ -126,6 +120,45 @@ func getLocalProxy() *httputil.ReverseProxy {
 	directToLocal := func(req *http.Request) {
 		req.URL.Scheme = "https"
 		req.URL.Host = "127.0.0.1:6443"
+		if len(req.TLS.PeerCertificates) > 0 {
+			cert := req.TLS.PeerCertificates[0]
+			fmt.Printf("%d\n", len(cert.DNSNames))
+			req.Header.Add("X-Remote-User", cert.Subject.CommonName)
+			for _, orgName := range cert.Subject.Organization {
+				req.Header.Add("X-Remote-Group", orgName)
+			}
+		} else {
+			req.URL.Path = "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews"
+			req.Method = "POST"
+			accessCheckReq := `{"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","metadata":
+							  {"creationTimestamp":null},"spec":{"resourceAttributes":{"group":"GROUP",
+							"name":"NAME","namespace":"SPACE","verb":"VERB"}}}`
+			x, _ := ioutil.ReadAll(req.Body)
+			f := AdmissionObject{}
+			json.Unmarshal(x, &f)
+			fmt.Println(f)
+			req.Header.Add("X-Remote-User", f.Request.UserInfo.Username)
+			for _, orgName := range f.Request.UserInfo.Groups {
+				req.Header.Add("X-Remote-Group", orgName)
+			}
+			filledResGrp := strings.Replace(accessCheckReq, "GROUP", f.Request.Resource.Group, -1)
+			filledResName := strings.Replace(filledResGrp, "NAME", f.Request.Resource.Resource, -1)
+			filledResNamespace := strings.Replace(filledResName, "SPACE", f.Request.Namespace, -1)
+			filledResVerb := strings.Replace(filledResNamespace, "VERB", f.Request.Operation, -1)
+
+			req.Body = ioutil.NopCloser(strings.NewReader(filledResVerb))
+			req.ContentLength = int64(len(filledResVerb))
+		}
+	}
+	proxy := &httputil.ReverseProxy{Director: directToLocal}
+	proxy.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromFiles(ProxyClientCert, ProxyClientKey, APIServerCACert)}
+	return proxy
+}
+
+func getAdmissionControllerProxy() *httputil.ReverseProxy {
+	directToLocal := func(req *http.Request) {
+		req.URL.Scheme = "https"
+		req.URL.Host = "127.0.0.1:6443"
 		cert := req.TLS.PeerCertificates[0]
 		fmt.Printf("%d\n", len(cert.DNSNames))
 		req.Header.Add("X-Remote-User", cert.Subject.CommonName)
@@ -137,6 +170,23 @@ func getLocalProxy() *httputil.ReverseProxy {
 	proxy.Transport = &http.Transport{TLSClientConfig: getTLSConfigFromFiles(ProxyClientCert, ProxyClientKey, APIServerCACert)}
 	return proxy
 }
+
+func addmissionController(c *gin.Context) {
+	recW := httptest.NewRecorder()
+	proxyLocal.ServeHTTP(recW, c.Request)
+	res := recW.Result()
+	x, _ := ioutil.ReadAll(res.Body)
+	f := AccessReviewResponse{}
+	json.Unmarshal(x, &f)
+	fmt.Println(f)
+	admissionStatusResponse := AdmissionResponse{}
+	status := AdmissionReview{}
+	admissionStatusResponse.Allowed = f.Status.Allowed
+	status.Response = &admissionStatusResponse
+	fmt.Println("Admission review response, allowed = ", f.Status.Allowed)
+	c.JSON(res.StatusCode, status)
+}
+
 func selectClusterConfig(c *gin.Context) {
 	fileName := c.Param("name")
 	dir, _ := os.Getwd()
@@ -215,7 +265,7 @@ func addClusterConfig(c *gin.Context) {
 }
 func main() {
 
-	proxyLocal := getLocalProxy()
+	proxyLocal = getLocalProxy()
 
 	allRequestHandler := func(c *gin.Context) {
 		if proxyRemote == nil {
@@ -223,6 +273,7 @@ func main() {
 		}
 		r := c.Request
 		w := c.Writer
+		fmt.Print("Got this request " + r.URL.Path)
 		if strings.Contains(r.URL.Path, "rbac") || strings.Contains(r.URL.Path, "certificates") || strings.Contains(r.URL.Path, "auth") {
 			proxyLocal.ServeHTTP(w, r)
 		} else {
@@ -248,24 +299,27 @@ func main() {
 	caCertPool.AppendCertsFromPEM(caCert)
 
 	r := gin.Default()
-	server := &http.Server{
+	server = &http.Server{
 		Addr: "0.0.0.0:8080",
 		TLSConfig: &tls.Config{
 			//Force client certificate validation,
 			//Required also to get PeerCertificates needed later to extract client identity information
-			ClientAuth: tls.RequireAndVerifyClientCert,
+			//Ideally should be RequireAndVerifyClientCert, but webhooks are not using certs
+
+			ClientAuth: tls.VerifyClientCertIfGiven,
 			//Similar to setting client-ca for shadow API server.
 			//Allows only certs signed by this CA
 			ClientCAs: caCertPool,
 		},
 		Handler: r,
 	}
+
 	r.NoRoute(allRequestHandler)
 
 	r.POST("/clusterconfig", addClusterConfig)
 	r.PUT("/clusterconfig/:name", selectClusterConfig)
 	r.POST("/kubeconfig", generateKubeConfig)
-	r.ANY("/access", addmissionController)
+	r.Any("/access", addmissionController)
 
 	log.Fatal(server.ListenAndServeTLS(ProxyServerCert, ProxyServerKey))
 }
